@@ -6,12 +6,13 @@ import subprocess
 import os
 import yt_dlp
 import urllib.parse
+import re
 
 st.set_page_config(page_title="App de Doblaje Fiesta 🎙️", page_icon="🎬", layout="centered")
 st.title("🎙️ ¡Juego de Doblaje Party!")
 st.write("Conviértete en actor de voz: busca una escena, graba frase por frase y descubre tu talento.")
 
-# Configuración optimizada contra el error 403 Forbidden
+# Configuración optimizada para yt-dlp
 YTDLP_OPTS = {
     'quiet': True,
     'no_warnings': True,
@@ -29,6 +30,28 @@ YTDLP_OPTS = {
         'Accept-Language': 'es-ES,es;q=0.9',
     }
 }
+
+def obtener_id_youtube(url):
+    """Extrae el ID del video de YouTube para el IFrame oficial"""
+    patron = r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})'
+    coincidencia = re.search(patron, url)
+    return coincidencia.group(1) if coincidencia else None
+
+def mostrar_reproductor_iframe(url_video):
+    """Muestra el reproductor oficial de YouTube sin bloqueos de servidor"""
+    video_id = obtener_id_youtube(url_video)
+    if video_id:
+        iframe_code = f'''
+            <iframe width="100%" height="315" 
+            src="https://www.youtube.com/embed/{video_id}" 
+            frameborder="0" 
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+            allowfullscreen>
+            </iframe>
+        '''
+        st.components.v1.html(iframe_code, height=325)
+    else:
+        st.video(url_video)
 
 def descargar_desde_youtube(url_youtube):
     with yt_dlp.YoutubeDL(YTDLP_OPTS) as ydl:
@@ -80,21 +103,22 @@ if opcion_origen == "YouTube (Enlace / Búsqueda) 📹":
             url_final = query
         else:
             url_busqueda = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
-            st.markdown(f"👉 [Haz clic aquí para abrir los resultados en YouTube]({url_busqueda}) y copia el enlace del video que te guste.")
-            url_final = st.text_input("Pega aquí el enlace copiado:")
+            st.markdown(f"👉 [Haz clic aquí para buscar en YouTube]({url_busqueda}) y pega la URL del video elegido abajo:")
+            url_final = st.text_input("Pega el enlace de YouTube aquí:")
 
         if url_final:
-            st.write("**Vista previa del video:**")
-            st.video(url_final)
+            st.subheader("📺 Vista previa en vivo:")
+            mostrar_reproductor_iframe(url_final)
             
-            if st.button("Cargar esta escena"):
+            if st.button("Usar esta escena"):
                 with st.spinner("Descargando video y procesando audio..."):
                     try:
                         descargar_desde_youtube(url_final)
                         st.session_state['archivos_listos'] = True
-                        st.success("¡Escena lista para doblar!")
+                        st.success("¡Escena descargada y lista para doblar!")
                     except Exception as e:
-                        st.error(f"Error al descargar: {e}")
+                        st.error("YouTube bloqueó la descarga directa desde el servidor de la nube (Error 403).")
+                        st.info("💡 **Solución:** Descarga el MP4 en tu teléfono usando una web externa (como cobalt.tools) y cárgalo en la pestaña 'Subir archivo MP4 local'.")
 else:
     video_file = st.file_uploader("Sube tu archivo de video (MP4)", type=["mp4"])
     audio_ref = st.file_uploader("Sube el audio de referencia (WAV/MP3)", type=["wav", "mp3"])
