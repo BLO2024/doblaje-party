@@ -7,7 +7,6 @@ import os
 import yt_dlp
 import urllib.parse
 import re
-import requests
 
 st.set_page_config(page_title="App de Doblaje Fiesta 🎙️", page_icon="🎬", layout="centered")
 st.title("🎙️ ¡Juego de Doblaje Party!")
@@ -20,7 +19,7 @@ def obtener_id_youtube(url):
     return coincidencia.group(1) if coincidencia else None
 
 def mostrar_reproductor_iframe(url_video):
-    """Renderiza el reproductor oficial IFrame para la vista previa sin bloqueos"""
+    """Muestra el reproductor oficial IFrame de YouTube"""
     video_id = obtener_id_youtube(url_video)
     if video_id:
         iframe_code = f'''
@@ -35,58 +34,24 @@ def mostrar_reproductor_iframe(url_video):
     else:
         st.video(url_video)
 
-def descargar_con_cobalt_api(url_youtube):
-    """Descarga directa solicitando el mejor formato compatible disponible"""
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "url": url_youtube,
-        "videoQuality": "max"
-    }
-    
-    instancias = [
-        "https://api.cobalt.tools/api/json",
-        "https://cobalt-api.kwiatek.xyz/api/json"
-    ]
-    
-    for api_url in instancias:
-        try:
-            res = requests.post(api_url, json=payload, headers=headers, timeout=12)
-            if res.status_code == 200:
-                data = res.json()
-                download_url = data.get("url")
-                if download_url:
-                    video_bytes = requests.get(download_url, timeout=60).content
-                    with open("video_input.mp4", "wb") as f:
-                        f.write(video_bytes)
-                    return True
-        except Exception:
-            continue
-    return False
-
-def descargar_con_ytdlp_flexible(url_youtube):
-    """Descarga comodín usando yt-dlp ignorando restricciones de formato rígidas"""
+def descargar_escena_youtube_nube(url_youtube):
+    """
+    Descarga video en baja calidad (360p/480p) + audio para evitar
+    el bloqueo de IP/Formatos de YouTube en Streamlit Cloud.
+    """
     opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'format': 'best',
+        # 'worst' o 'worstvideo+bestaudio' evade los bloqueos de YouTube en la nube
+        'format': 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst',
         'outtmpl': 'video_input.mp4',
         'overwrites': True,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url_youtube])
 
-def descargar_desde_youtube(url_youtube):
-    """Intenta Cobalt y si falla usa la descarga comodín de yt-dlp"""
-    exito = descargar_con_cobalt_api(url_youtube)
-    
-    if not exito:
-        descargar_con_ytdlp_flexible(url_youtube)
-
-    # Extraer audio PCM con FFmpeg a 16kHz
+    # Extraer audio PCM limpio a 16kHz para Whisper
     cmd_audio = "ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav"
     subprocess.run(cmd_audio, shell=True)
 
@@ -137,13 +102,13 @@ if opcion_origen == "YouTube (Enlace / Búsqueda) 📹":
             url_final = st.text_input("Pega el enlace de YouTube aquí:")
 
         if url_final:
-            st.subheader("📺 Vista previa en vivo:")
+            st.subheader("📺 Escena seleccionada:")
             mostrar_reproductor_iframe(url_final)
             
             if st.button("Usar esta escena"):
-                with st.spinner("Descargando escena vía API o yt-dlp..."):
+                with st.spinner("Descargando escena y procesando audio..."):
                     try:
-                        descargar_desde_youtube(url_final)
+                        descargar_escena_youtube_nube(url_final)
                         st.session_state['archivos_listos'] = True
                         st.success("¡Escena lista para doblar!")
                     except Exception as e:
@@ -189,7 +154,7 @@ if 'segments' in st.session_state:
     st.divider()
     st.header("3. Ensamblado y Resultado")
     if st.button("🎬 Generar Video Final Doblado") and mapa_tomas:
-        with st.spinner("FFmpeg está mezclando tu interpretación con la escena..."):
+        with st.spinner("FFmpeg está mezclando tu voz con la escena..."):
             inputs = ["-i video_input.mp4"]
             filter_complex = ""
             mix_labels = ""
@@ -201,8 +166,11 @@ if 'segments' in st.session_state:
                 mix_labels += f"[a{idx_input}]"
             count_inputs = len(mapa_tomas)
             filter_complex += f"{mix_labels}amix=inputs={count_inputs}:duration=first[aout]"
+            
+            # Ensambla la pista visual descargada con las voces grabadas en un MP4 final
             cmd = f"ffmpeg -y {' '.join(inputs)} -filter_complex \"{filter_complex}\" -map 0:v -map \"[aout]\" -c:v copy -c:a aac resultado.mp4"
             subprocess.run(cmd, shell=True)
+            
             if os.path.exists("resultado.mp4"):
                 st.video("resultado.mp4")
-                st.success("¡Tu doblaje quedó listo!")
+                st.success("¡Tu video doblado quedó listo!")
