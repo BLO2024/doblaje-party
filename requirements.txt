@@ -1,6 +1,6 @@
 streamlit
-requests
 openai-whisper
 librosa
 numpy
 yt-dlp
+googlesearch-python
