@@ -7,12 +7,13 @@ import os
 import yt_dlp
 import urllib.parse
 import re
+import requests
 
 st.set_page_config(page_title="App de Doblaje Fiesta 🎙️", page_icon="🎬", layout="centered")
 st.title("🎙️ ¡Juego de Doblaje Party!")
 st.write("Conviértete en actor de voz: busca una escena, graba frase por frase y descubre tu talento.")
 
-# Configuración optimizada para yt-dlp
+# Configuración de yt-dlp con soporte para cookies
 YTDLP_OPTS = {
     'quiet': True,
     'no_warnings': True,
@@ -20,25 +21,24 @@ YTDLP_OPTS = {
     'format': 'best[ext=mp4]/best',
     'outtmpl': 'video_input.mp4',
     'overwrites': True,
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['web_creator', 'android']
-        }
-    },
     'http_headers': {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': 'es-ES,es;q=0.9',
     }
 }
 
+# Si existe el archivo cookies.txt en la raíz del proyecto, yt-dlp lo utilizará
+if os.path.exists("cookies.txt"):
+    YTDLP_OPTS['cookiefile'] = 'cookies.txt'
+
 def obtener_id_youtube(url):
-    """Extrae el ID del video de YouTube para el IFrame oficial"""
+    """Extrae el ID único del video de YouTube"""
     patron = r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})'
     coincidencia = re.search(patron, url)
     return coincidencia.group(1) if coincidencia else None
 
 def mostrar_reproductor_iframe(url_video):
-    """Muestra el reproductor oficial de YouTube sin bloqueos de servidor"""
+    """Renderiza el reproductor oficial IFrame para la vista previa sin bloqueos"""
     video_id = obtener_id_youtube(url_video)
     if video_id:
         iframe_code = f'''
@@ -53,10 +53,46 @@ def mostrar_reproductor_iframe(url_video):
     else:
         st.video(url_video)
 
-def descargar_desde_youtube(url_youtube):
-    with yt_dlp.YoutubeDL(YTDLP_OPTS) as ydl:
-        ydl.download([url_youtube])
+def descargar_con_invidious(video_id):
+    """Opción 1: Intenta descargar el video a través del proxy Invidious"""
+    instancias = [
+        "https://invidious.nerdvpn.de",
+        "https://inv.nadeko.net",
+        "https://invidious.no-name-given.de"
+    ]
     
+    for instancia in instancias:
+        try:
+            api_url = f"{instancia}/api/v1/videos/{video_id}"
+            res = requests.get(api_url, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                formatos = data.get('formatStreams', [])
+                if formatos:
+                    stream_url = formatos[0]['url']
+                    video_bytes = requests.get(stream_url, timeout=30).content
+                    with open("video_input.mp4", "wb") as f:
+                        f.write(video_bytes)
+                    return True
+        except Exception:
+            continue
+    return False
+
+def descargar_desde_youtube(url_youtube):
+    """Sistema híbrido de descarga (Invidious + yt-dlp con cookies de respaldo)"""
+    video_id = obtener_id_youtube(url_youtube)
+    exito = False
+    
+    # Intento 1: Descarga mediante proxy de Invidious
+    if video_id:
+        exito = descargar_con_invidious(video_id)
+    
+    # Intento 2: Respando con yt-dlp usando cookies.txt si la Opción 1 falla
+    if not exito:
+        with yt_dlp.YoutubeDL(YTDLP_OPTS) as ydl:
+            ydl.download([url_youtube])
+
+    # Extracción de audio PCM con FFmpeg a 16kHz para Whisper
     cmd_audio = "ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav"
     subprocess.run(cmd_audio, shell=True)
 
@@ -111,14 +147,13 @@ if opcion_origen == "YouTube (Enlace / Búsqueda) 📹":
             mostrar_reproductor_iframe(url_final)
             
             if st.button("Usar esta escena"):
-                with st.spinner("Descargando video y procesando audio..."):
+                with st.spinner("Procesando escena..."):
                     try:
                         descargar_desde_youtube(url_final)
                         st.session_state['archivos_listos'] = True
-                        st.success("¡Escena descargada y lista para doblar!")
+                        st.success("¡Escena lista para doblar!")
                     except Exception as e:
-                        st.error("YouTube bloqueó la descarga directa desde el servidor de la nube (Error 403).")
-                        st.info("💡 **Solución:** Descarga el MP4 en tu teléfono usando una web externa (como cobalt.tools) y cárgalo en la pestaña 'Subir archivo MP4 local'.")
+                        st.error(f"Error al descargar la escena: {e}")
 else:
     video_file = st.file_uploader("Sube tu archivo de video (MP4)", type=["mp4"])
     audio_ref = st.file_uploader("Sube el audio de referencia (WAV/MP3)", type=["wav", "mp3"])
