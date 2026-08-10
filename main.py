@@ -59,17 +59,28 @@ opcion_origen = st.radio("¿De dónde obtenemos la escena?", ("Pegar enlace de Y
 
 if opcion_origen == "Pegar enlace de YouTube 📹":
     url_input = st.text_input("Pega aquí el enlace del Short o video de YouTube:")
-    if url_input and st.button("Descargar y Procesar Clip"):
-        with st.spinner("Descargando video y extrayendo voz..."):
-            try:
-                descargar_desde_youtube(url_input)
-                st.session_state['archivos_listos'] = True
-                st.success("¡Video cargado desde YouTube!")
-            except Exception as e:
-                st.error(f"Error con el enlace: {e}")
+    
+    # Muestra la vista previa del video inmediatamente al pegar el enlace
+    if url_input:
+        st.subheader("📺 Vista previa del video:")
+        st.video(url_input)
+        
+        if st.button("Descargar y Procesar Clip"):
+            with st.spinner("Descargando video y extrayendo voz..."):
+                try:
+                    descargar_desde_youtube(url_input)
+                    st.session_state['archivos_listos'] = True
+                    st.success("¡Video cargado desde YouTube!")
+                except Exception as e:
+                    st.error(f"Error con el enlace: {e}")
 else:
     video_file = st.file_uploader("Sube tu archivo de video (MP4)", type=["mp4"])
     audio_ref = st.file_uploader("Sube el audio de referencia (WAV/MP3)", type=["wav", "mp3"])
+    
+    if video_file:
+        st.subheader("📺 Vista previa del video local:")
+        st.video(video_file)
+        
     if video_file and audio_ref:
         with open("video_input.mp4", "wb") as f:
             f.write(video_file.getbuffer())
