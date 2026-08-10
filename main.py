@@ -36,17 +36,16 @@ def mostrar_reproductor_iframe(url_video):
         st.video(url_video)
 
 def descargar_con_cobalt_api(url_youtube):
-    """Método 1: Estilo Y2Mate usando la API gratuita de Cobalt.tools"""
+    """Descarga directa solicitando el mejor formato compatible disponible"""
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json"
     }
     payload = {
         "url": url_youtube,
-        "videoQuality": "720"
+        "videoQuality": "max"
     }
     
-    # Servidores/instancias públicas de Cobalt
     instancias = [
         "https://api.cobalt.tools/api/json",
         "https://cobalt-api.kwiatek.xyz/api/json"
@@ -59,7 +58,7 @@ def descargar_con_cobalt_api(url_youtube):
                 data = res.json()
                 download_url = data.get("url")
                 if download_url:
-                    video_bytes = requests.get(download_url, timeout=40).content
+                    video_bytes = requests.get(download_url, timeout=60).content
                     with open("video_input.mp4", "wb") as f:
                         f.write(video_bytes)
                     return True
@@ -68,13 +67,12 @@ def descargar_con_cobalt_api(url_youtube):
     return False
 
 def descargar_con_ytdlp_flexible(url_youtube):
-    """Método 2: Respaldo con yt-dlp usando formatos flexibles (fusión automática)"""
+    """Descarga comodín usando yt-dlp ignorando restricciones de formato rígidas"""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        # Acepta cualquier formato combinado o baja mejor video + mejor audio
-        'format': 'b/best/bestvideo+bestaudio',
+        'format': 'best',
         'outtmpl': 'video_input.mp4',
         'overwrites': True,
     }
@@ -82,13 +80,13 @@ def descargar_con_ytdlp_flexible(url_youtube):
         ydl.download([url_youtube])
 
 def descargar_desde_youtube(url_youtube):
-    """Intenta primero el método estilo Y2Mate (Cobalt) y luego yt-dlp flexible"""
+    """Intenta Cobalt y si falla usa la descarga comodín de yt-dlp"""
     exito = descargar_con_cobalt_api(url_youtube)
     
     if not exito:
         descargar_con_ytdlp_flexible(url_youtube)
 
-    # Extraer audio PCM con FFmpeg para Whisper
+    # Extraer audio PCM con FFmpeg a 16kHz
     cmd_audio = "ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav"
     subprocess.run(cmd_audio, shell=True)
 
@@ -143,7 +141,7 @@ if opcion_origen == "YouTube (Enlace / Búsqueda) 📹":
             mostrar_reproductor_iframe(url_final)
             
             if st.button("Usar esta escena"):
-                with st.spinner("Descargando escena vía API..."):
+                with st.spinner("Descargando escena vía API o yt-dlp..."):
                     try:
                         descargar_desde_youtube(url_final)
                         st.session_state['archivos_listos'] = True
