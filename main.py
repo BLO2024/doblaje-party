@@ -5,53 +5,28 @@ import numpy as np
 import subprocess
 import os
 import yt_dlp
-import urllib.parse
 import re
 
-st.set_page_config(page_title="App de Doblaje Fiesta 🎙️", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="App de Doblaje Party 🎙️", page_icon="🎬", layout="centered")
 st.title("🎙️ ¡Juego de Doblaje Party!")
-st.write("Conviértete en actor de voz: busca una escena, graba frase por frase y descubre tu talento.")
+st.write("Conviértete en actor de voz: pega una escena de TikTok o YouTube, graba frase por frase y crea tu doblaje.")
 
-def obtener_id_youtube(url):
-    """Extrae el ID único del video de YouTube"""
-    patron = r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})'
-    coincidencia = re.search(patron, url)
-    return coincidencia.group(1) if coincidencia else None
-
-def mostrar_reproductor_iframe(url_video):
-    """Muestra el reproductor oficial IFrame de YouTube"""
-    video_id = obtener_id_youtube(url_video)
-    if video_id:
-        iframe_code = f'''
-            <iframe width="100%" height="315" 
-            src="https://www.youtube.com/embed/{video_id}" 
-            frameborder="0" 
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-            allowfullscreen>
-            </iframe>
-        '''
-        st.components.v1.html(iframe_code, height=325)
-    else:
-        st.video(url_video)
-
-def descargar_escena_youtube_nube(url_youtube):
+def descargar_escena_tiktok_o_yt(url):
     """
-    Descarga video en baja calidad (360p/480p) + audio para evitar
-    el bloqueo de IP/Formatos de YouTube en Streamlit Cloud.
+    Descarga el video e extrae el audio de TikTok o YouTube directamente.
     """
     opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        # 'worst' o 'worstvideo+bestaudio' evade los bloqueos de YouTube en la nube
-        'format': 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst',
+        'format': 'mp4/best',
         'outtmpl': 'video_input.mp4',
         'overwrites': True,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url_youtube])
+        ydl.download([url])
 
-    # Extraer audio PCM limpio a 16kHz para Whisper
+    # Extraer el audio limpio a 16kHz para Whisper
     cmd_audio = "ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav"
     subprocess.run(cmd_audio, shell=True)
 
@@ -88,31 +63,24 @@ def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
         return 75.0, "⭐⭐⭐⭐", "👍 ¡BUENA TOMA!", "Grabación lista para el montaje final."
 
 st.header("1. Elige tu Escena")
-opcion_origen = st.radio("¿De dónde obtenemos la escena?", ("YouTube (Enlace / Búsqueda) 📹", "Subir archivo MP4 local 📁"))
+opcion_origen = st.radio("¿De dónde obtenemos la escena?", ("TikTok / YouTube (URL) 📱", "Subir archivo MP4 local 📁"))
 
-if opcion_origen == "YouTube (Enlace / Búsqueda) 📹":
-    query = st.text_input("Escribe el nombre de la escena o pega la URL directamente:")
+if opcion_origen == "TikTok / YouTube (URL) 📱":
+    url_input = st.text_input("Pega el enlace de TikTok o YouTube aquí:")
     
-    if query:
-        if "youtube.com" in query or "youtu.be" in query:
-            url_final = query
-        else:
-            url_busqueda = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
-            st.markdown(f"👉 [Haz clic aquí para buscar en YouTube]({url_busqueda}) y pega la URL del video elegido abajo:")
-            url_final = st.text_input("Pega el enlace de YouTube aquí:")
+    if url_input:
+        if st.button("Descargar y procesar escena"):
+            with st.spinner("Obteniendo video y procesando audio..."):
+                try:
+                    descargar_escena_tiktok_o_yt(url_input)
+                    st.session_state['archivos_listos'] = True
+                    st.success("¡Escena lista!")
+                except Exception as e:
+                    st.error(f"Error al descargar la escena: {e}")
 
-        if url_final:
-            st.subheader("📺 Escena seleccionada:")
-            mostrar_reproductor_iframe(url_final)
-            
-            if st.button("Usar esta escena"):
-                with st.spinner("Descargando escena y procesando audio..."):
-                    try:
-                        descargar_escena_youtube_nube(url_final)
-                        st.session_state['archivos_listos'] = True
-                        st.success("¡Escena lista para doblar!")
-                    except Exception as e:
-                        st.error(f"Error al procesar la escena: {e}")
+        if os.path.exists("video_input.mp4"):
+            st.subheader("📺 Vista previa del video:")
+            st.video("video_input.mp4")
 else:
     video_file = st.file_uploader("Sube tu archivo de video (MP4)", type=["mp4"])
     audio_ref = st.file_uploader("Sube el audio de referencia (WAV/MP3)", type=["wav", "mp3"])
@@ -167,7 +135,6 @@ if 'segments' in st.session_state:
             count_inputs = len(mapa_tomas)
             filter_complex += f"{mix_labels}amix=inputs={count_inputs}:duration=first[aout]"
             
-            # Ensambla la pista visual descargada con las voces grabadas en un MP4 final
             cmd = f"ffmpeg -y {' '.join(inputs)} -filter_complex \"{filter_complex}\" -map 0:v -map \"[aout]\" -c:v copy -c:a aac resultado.mp4"
             subprocess.run(cmd, shell=True)
             
