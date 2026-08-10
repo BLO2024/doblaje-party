@@ -9,7 +9,7 @@ import yt_dlp
 
 st.set_page_config(page_title="App de Doblaje Party 🎙️", page_icon="🎬", layout="wide")
 
-# Estilos CSS para el modo Teleprompter y las tarjetas
+# Estilos CSS para el modo Teleprompter y la interfaz
 st.markdown("""
     <style>
     .teleprompter-box {
@@ -33,7 +33,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🎙️ ¡Juego de Doblaje Party!")
-st.write("Busca cualquier escena, guíate con la vista previa por frase y el teleprompter, graba tus voces y genera tu doblaje.")
+st.write("Carga tu escena (vía MP4 local, TikTok, enlace de YouTube o Buscador), graba tus voces y genera tu doblaje.")
 
 def buscar_videos_yt(query, max_results=4):
     """Busca videos en YouTube y devuelve miniaturas, títulos y URLs"""
@@ -41,6 +41,7 @@ def buscar_videos_yt(query, max_results=4):
         'quiet': True,
         'extract_flat': 'in_playlist',
         'skip_download': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     }
     resultados = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -58,7 +59,7 @@ def buscar_videos_yt(query, max_results=4):
     return resultados
 
 def descargar_escena(url):
-    """Descarga la escena e extrae el audio de referencia"""
+    """Descarga la escena de YouTube o TikTok e extrae el audio de referencia"""
     opts = {
         'quiet': True,
         'no_warnings': True,
@@ -66,6 +67,8 @@ def descargar_escena(url):
         'format': 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst',
         'outtmpl': 'video_input.mp4',
         'overwrites': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'referer': 'https://www.tiktok.com/',
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
@@ -80,10 +83,6 @@ def recortar_fragmento_video(inicio, fin, output_path):
     subprocess.run(cmd, shell=True)
 
 def limpiar_archivos_temporales(limpiar_todo=False):
-    """
-    Elimina archivos de audio, fragmentos de video y cache.
-    Si limpiar_todo=True, también borra el video de entrada original.
-    """
     patrones = [
         "clip_preview_*.mp4",
         "user_toma_*.wav",
@@ -136,33 +135,60 @@ def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
     except Exception:
         return 75.0, "⭐⭐⭐⭐", "👍 ¡BUENA TOMA!", "Grabación lista para el montaje final."
 
-# --- PASO 1: BÚSQUEDA Y SELECCIÓN DE ESCENA ---
-st.header("1. Busca y Selecciona tu Escena")
-query = st.text_input("Escribe el nombre de la serie, anime o película que quieres doblar:")
+# --- PASO 1: SELECCIÓN DE ESCENA CON MÚLTIPLES FUENTES ---
+st.header("1. Carga tu Escena")
 
-if query:
-    with st.spinner("Buscando las mejores escenas..."):
-        resultados = buscar_videos_yt(query, max_results=4)
-    
-    if resultados:
-        col1, col2, col3, col4 = st.columns(4)
-        cols = [col1, col2, col3, col4]
-        for idx, item in enumerate(resultados):
-            with cols[idx]:
-                st.image(item['thumbnail'], use_container_width=True)
-                st.caption(f"**{item['title']}**")
-                if st.button(f"🎬 Usar esta escena", key=f"btn_{idx}"):
-                    st.session_state['selected_url'] = item['url']
+metodo_origen = st.radio(
+    "Selecciona cómo quieres cargar la escena:",
+    ("Subir archivo MP4 local 📁", "Pegar enlace directo (TikTok / YouTube) 🔗", "Buscador integrado 🔍")
+)
 
-if 'selected_url' in st.session_state:
-    if st.button("📥 Descargar y preparar escena"):
-        with st.spinner("Procesando audio y video..."):
+if metodo_origen == "Subir archivo MP4 local 📁":
+    uploaded_file = st.file_uploader("Elige un archivo de video MP4 desde tu dispositivo:", type=["mp4"])
+    if uploaded_file is not None:
+        with open("video_input.mp4", "wb") as f:
+            f.write(uploaded_file.read())
+        cmd_audio = "ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav"
+        subprocess.run(cmd_audio, shell=True)
+        st.session_state['archivos_listos'] = True
+        st.success("¡Video subido y preparado con éxito!")
+
+elif metodo_origen == "Pegar enlace directo (TikTok / YouTube) 🔗":
+    url_directa = st.text_input("Pega el enlace de TikTok o YouTube:")
+    if url_directa and st.button("Descargar escena desde el enlace"):
+        with st.spinner("Descargando video..."):
             try:
-                descargar_escena(st.session_state['selected_url'])
+                descargar_escena(url_directa)
                 st.session_state['archivos_listos'] = True
-                st.success("¡Escena descargada y lista!")
+                st.success("¡Escena descargada y lista para doblar!")
             except Exception as e:
-                st.error(f"Error al descargar la escena: {e}")
+                st.error(f"Error al descargar la URL: {e}")
+
+elif metodo_origen == "Buscador integrado 🔍":
+    query = st.text_input("Escribe el nombre de la serie, anime o película que quieres doblar:")
+    if query:
+        with st.spinner("Buscando las mejores escenas..."):
+            resultados = buscar_videos_yt(query, max_results=4)
+        
+        if resultados:
+            col1, col2, col3, col4 = st.columns(4)
+            cols = [col1, col2, col3, col4]
+            for idx, item in enumerate(resultados):
+                with cols[idx]:
+                    st.image(item['thumbnail'], use_container_width=True)
+                    st.caption(f"**{item['title']}**")
+                    if st.button(f"🎬 Usar esta escena", key=f"btn_{idx}"):
+                        st.session_state['selected_url'] = item['url']
+
+    if 'selected_url' in st.session_state:
+        if st.button("📥 Descargar escena seleccionada"):
+            with st.spinner("Procesando escena..."):
+                try:
+                    descargar_escena(st.session_state['selected_url'])
+                    st.session_state['archivos_listos'] = True
+                    st.success("¡Escena descargada y lista!")
+                except Exception as e:
+                    st.error(f"Error al descargar la escena: {e}")
 
 # --- PASO 2: EXTRAER DIÁLOGOS ---
 if st.session_state.get('archivos_listos', False):
@@ -178,7 +204,6 @@ if st.session_state.get('archivos_listos', False):
 if 'segments' in st.session_state:
     st.divider()
     st.header("2. Estudio de Grabación 🎬")
-    st.write("Mira la escena completa a la izquierda o reproduce el clip específico de cada frase antes de grabar.")
 
     segments = st.session_state['segments']
     mapa_tomas = []
