@@ -11,21 +11,22 @@ st.set_page_config(page_title="App de Doblaje Fiesta 🎙️", page_icon="🎬",
 st.title("🎙️ ¡Juego de Doblaje Party!")
 st.write("Conviértete en actor de voz: busca una escena, graba frase por frase y descubre tu talento.")
 
-# Opciones optimizadas para bajar audio/video desde URL
+# Configuración optimizada contra el error 403 Forbidden
 YTDLP_OPTS = {
     'quiet': True,
     'no_warnings': True,
     'nocheckcertificate': True,
-    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    'format': 'best[ext=mp4]/best',
     'outtmpl': 'video_input.mp4',
     'overwrites': True,
     'extractor_args': {
         'youtube': {
-            'player_client': ['android', 'ios']
+            'player_client': ['web_creator', 'android']
         }
     },
     'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'es-ES,es;q=0.9',
     }
 }
 
