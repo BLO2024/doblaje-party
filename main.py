@@ -6,7 +6,9 @@ import subprocess
 import os
 import glob
 import yt_dlp
-from googlesearch import search
+import urllib.parse
+import urllib.request
+import json
 
 st.set_page_config(page_title="App de Doblaje Party 🎙️", page_icon="🎬", layout="wide")
 
@@ -60,16 +62,19 @@ def buscar_videos_generales(query, max_results=4):
     return resultados
 
 def buscar_referencia_google(frase_original):
-    """Busca en Google referencias de la frase para sugerir/verificar el diálogo correcto"""
+    """Busca sugerencias usando el motor de autocompletado de DuckDuckGo / Google sin librerías externas"""
     try:
-        # Búsqueda rápida de la frase para hallar contexto o diálogos de referencias
-        query = f'"{frase_original}" dialogo clip'
-        resultados = list(search(query, num_results=3, lang="es"))
-        if resultados:
-            return f"Referencia web encontrada: {resultados[0]}"
+        query = urllib.parse.quote(frase_original)
+        url = f"https://duckduckgo.com/ac/?q={query}&type=list"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            if len(data) > 1 and len(data[1]) > 0:
+                sugerencias = ", ".join(data[1][:3])
+                return f"Sugerencias de búsqueda encontradas: {sugerencias}"
     except Exception:
         pass
-    return "No se encontraron referencias externas exactas."
+    return "No se encontraron coincidencias automáticas. Puedes ajustar la frase manualmente arriba."
 
 def cargar_y_preparar_escena(origen_tipo, recurso):
     """Descarga/guarda el video, obtiene el audio y realiza la detección de diálogos automáticamente"""
@@ -92,11 +97,9 @@ def cargar_y_preparar_escena(origen_tipo, recurso):
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     ydl.download([recurso])
 
-            # Extraer audio de referencia
             cmd_audio = "ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav"
             subprocess.run(cmd_audio, shell=True)
 
-            # Procesamiento inteligente de fondo (Whisper)
             model = whisper.load_model("base")
             result = model.transcribe("audio_ref.wav")
             
@@ -216,13 +219,11 @@ if st.session_state.get('escena_lista', False) and 'segments' in st.session_stat
                 </div>
             """, unsafe_allow_html=True)
             
-            # Edición manual del texto detectado
             texto_editado = st.text_input(
                 f"Texto de la Frase {idx + 1}:",
                 value=seg['text'].strip(),
                 key=f"text_edit_{idx}"
             )
-            # Guardamos los cambios hechos por el usuario
             st.session_state['segments'][idx]['text'] = texto_editado
 
             col_btn1, col_btn2 = st.columns([1, 1])
@@ -233,8 +234,8 @@ if st.session_state.get('escena_lista', False) and 'segments' in st.session_stat
                         recortar_fragmento_video(seg['start'], seg['end'], clip_path)
             
             with col_btn2:
-                if st.button(f"🔍 Buscar contexto en Google", key=f"goog_btn_{idx}"):
-                    with st.spinner("Buscando referencia externa..."):
+                if st.button(f"🔍 Buscar referencias web", key=f"goog_btn_{idx}"):
+                    with st.spinner("Buscando sugerencias..."):
                         info_ref = buscar_referencia_google(texto_editado)
                         st.info(info_ref)
 
