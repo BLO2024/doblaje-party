@@ -4,31 +4,105 @@ import librosa
 import numpy as np
 import subprocess
 import os
+import glob
 import yt_dlp
-import re
 
-st.set_page_config(page_title="App de Doblaje Party 🎙️", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="App de Doblaje Party 🎙️", page_icon="🎬", layout="wide")
+
+# Estilos CSS para el modo Teleprompter y las tarjetas
+st.markdown("""
+    <style>
+    .teleprompter-box {
+        background-color: #111827;
+        border-left: 5px solid #3B82F6;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+    }
+    .teleprompter-text {
+        font-size: 22px;
+        font-weight: bold;
+        color: #F3F4F6;
+        margin: 0;
+    }
+    .time-badge {
+        font-size: 12px;
+        color: #9CA3AF;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("🎙️ ¡Juego de Doblaje Party!")
-st.write("Conviértete en actor de voz: pega una escena de TikTok o YouTube, graba frase por frase y crea tu doblaje.")
+st.write("Busca cualquier escena, guíate con la vista previa por frase y el teleprompter, graba tus voces y genera tu doblaje.")
 
-def descargar_escena_tiktok_o_yt(url):
-    """
-    Descarga el video e extrae el audio de TikTok o YouTube directamente.
-    """
+def buscar_videos_yt(query, max_results=4):
+    """Busca videos en YouTube y devuelve miniaturas, títulos y URLs"""
+    ydl_opts = {
+        'quiet': True,
+        'extract_flat': 'in_playlist',
+        'skip_download': True,
+    }
+    resultados = []
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
+            if 'entries' in info:
+                for entry in info['entries']:
+                    resultados.append({
+                        'title': entry.get('title', 'Sin título'),
+                        'url': f"https://www.youtube.com/watch?v={entry.get('id')}",
+                        'thumbnail': f"https://i.ytimg.com/vi/{entry.get('id')}/hqdefault.jpg",
+                    })
+        except Exception as e:
+            st.error(f"Error en la búsqueda: {e}")
+    return resultados
+
+def descargar_escena(url):
+    """Descarga la escena e extrae el audio de referencia"""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'format': 'mp4/best',
+        'format': 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst',
         'outtmpl': 'video_input.mp4',
         'overwrites': True,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([url])
 
-    # Extraer el audio limpio a 16kHz para Whisper
     cmd_audio = "ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav"
     subprocess.run(cmd_audio, shell=True)
+
+def recortar_fragmento_video(inicio, fin, output_path):
+    """Recorta un fragmento específico de video usando FFmpeg"""
+    duracion = fin - inicio
+    cmd = f"ffmpeg -y -ss {inicio} -i video_input.mp4 -t {duracion} -c:v copy -c:a aac {output_path}"
+    subprocess.run(cmd, shell=True)
+
+def limpiar_archivos_temporales(limpiar_todo=False):
+    """
+    Elimina archivos de audio, fragmentos de video y cache.
+    Si limpiar_todo=True, también borra el video de entrada original.
+    """
+    patrones = [
+        "clip_preview_*.mp4",
+        "user_toma_*.wav",
+        "audio_ref.wav",
+        "audio_temp.wav"
+    ]
+    if limpiar_todo:
+        patrones.append("video_input.mp4")
+
+    archivos_eliminados = 0
+    for patron in patrones:
+        archivos = glob.glob(patron)
+        for archivo in archivos:
+            try:
+                os.remove(archivo)
+                archivos_eliminados += 1
+            except Exception:
+                pass
+    return archivos_eliminados
 
 def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
     try:
@@ -62,82 +136,134 @@ def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
     except Exception:
         return 75.0, "⭐⭐⭐⭐", "👍 ¡BUENA TOMA!", "Grabación lista para el montaje final."
 
-st.header("1. Elige tu Escena")
-opcion_origen = st.radio("¿De dónde obtenemos la escena?", ("TikTok / YouTube (URL) 📱", "Subir archivo MP4 local 📁"))
+# --- PASO 1: BÚSQUEDA Y SELECCIÓN DE ESCENA ---
+st.header("1. Busca y Selecciona tu Escena")
+query = st.text_input("Escribe el nombre de la serie, anime o película que quieres doblar:")
 
-if opcion_origen == "TikTok / YouTube (URL) 📱":
-    url_input = st.text_input("Pega el enlace de TikTok o YouTube aquí:")
+if query:
+    with st.spinner("Buscando las mejores escenas..."):
+        resultados = buscar_videos_yt(query, max_results=4)
     
-    if url_input:
-        if st.button("Descargar y procesar escena"):
-            with st.spinner("Obteniendo video y procesando audio..."):
-                try:
-                    descargar_escena_tiktok_o_yt(url_input)
-                    st.session_state['archivos_listos'] = True
-                    st.success("¡Escena lista!")
-                except Exception as e:
-                    st.error(f"Error al descargar la escena: {e}")
+    if resultados:
+        col1, col2, col3, col4 = st.columns(4)
+        cols = [col1, col2, col3, col4]
+        for idx, item in enumerate(resultados):
+            with cols[idx]:
+                st.image(item['thumbnail'], use_container_width=True)
+                st.caption(f"**{item['title']}**")
+                if st.button(f"🎬 Usar esta escena", key=f"btn_{idx}"):
+                    st.session_state['selected_url'] = item['url']
 
-        if os.path.exists("video_input.mp4"):
-            st.subheader("📺 Vista previa del video:")
-            st.video("video_input.mp4")
-else:
-    video_file = st.file_uploader("Sube tu archivo de video (MP4)", type=["mp4"])
-    audio_ref = st.file_uploader("Sube el audio de referencia (WAV/MP3)", type=["wav", "mp3"])
-    if video_file:
-        st.video(video_file)
-    if video_file and audio_ref:
-        with open("video_input.mp4", "wb") as f:
-            f.write(video_file.getbuffer())
-        with open("audio_ref.wav", "wb") as f:
-            f.write(audio_ref.getbuffer())
-        st.session_state['archivos_listos'] = True
+if 'selected_url' in st.session_state:
+    if st.button("📥 Descargar y preparar escena"):
+        with st.spinner("Procesando audio y video..."):
+            try:
+                descargar_escena(st.session_state['selected_url'])
+                st.session_state['archivos_listos'] = True
+                st.success("¡Escena descargada y lista!")
+            except Exception as e:
+                st.error(f"Error al descargar la escena: {e}")
 
+# --- PASO 2: EXTRAER DIÁLOGOS ---
 if st.session_state.get('archivos_listos', False):
     st.divider()
     if st.button("🔍 Extraer Diálogos con IA"):
-        with st.spinner("Whisper está escuchando y cortando las frases..."):
+        with st.spinner("Whisper está escuchando y separando las frases..."):
             model = whisper.load_model("base")
             result = model.transcribe("audio_ref.wav")
             st.session_state['segments'] = result['segments']
-            st.success("¡Listas las frases para grabar!")
+            st.success("¡Diálogos listos!")
 
+# --- PASO 3: ESTUDIO DE GRABACIÓN INTERACTIVO ---
 if 'segments' in st.session_state:
-    st.header("2. Grabación y Calificación Cómica")
+    st.divider()
+    st.header("2. Estudio de Grabación 🎬")
+    st.write("Mira la escena completa a la izquierda o reproduce el clip específico de cada frase antes de grabar.")
+
     segments = st.session_state['segments']
     mapa_tomas = []
-    for idx, seg in enumerate(segments):
-        st.subheader(f"Frase {idx + 1} ({seg['start']:.1f}s - {seg['end']:.1f}s)")
-        st.info(f"👉 **\"{seg['text']}\"**")
-        audio_data = st.audio_input(f"Grabar frase {idx + 1}", key=f"rec_{idx}")
-        toma_path = f"user_toma_{idx}.wav"
-        if audio_data:
-            with open(toma_path, "wb") as f:
-                f.write(audio_data.read())
-            score, estrellas, titulo, mensaje = evaluar_toma_divertida("audio_ref.wav", toma_path)
-            st.markdown(f"### {estrellas} {titulo}")
-            st.caption(f"**Puntuación: {score}%** — {mensaje}")
-            mapa_tomas.append((toma_path, seg['start']))
 
-    st.divider()
-    st.header("3. Ensamblado y Resultado")
-    if st.button("🎬 Generar Video Final Doblado") and mapa_tomas:
-        with st.spinner("FFmpeg está mezclando tu voz con la escena..."):
+    col_video, col_estudio = st.columns([1, 1], gap="large")
+
+    with col_video:
+        st.subheader("📺 Escena Completa")
+        if os.path.exists("video_input.mp4"):
+            st.video("video_input.mp4")
+
+    with col_estudio:
+        st.subheader("🎙️ Teleprompter & Grabación")
+        
+        for idx, seg in enumerate(segments):
+            st.markdown(f"""
+                <div class="teleprompter-box">
+                    <span class="time-badge">Frase {idx + 1} | Tiempo: {seg['start']:.1f}s - {seg['end']:.1f}s</span>
+                    <p class="teleprompter-text">"{seg['text']}"</p>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            clip_path = f"clip_preview_{idx}.mp4"
+            if st.button(f"▶️ Ver fragmento de la frase {idx + 1}", key=f"prev_btn_{idx}"):
+                with st.spinner("Generando vista previa..."):
+                    recortar_fragmento_video(seg['start'], seg['end'], clip_path)
+                
+            if os.path.exists(clip_path):
+                st.caption(f"🎬 Fragmento ({seg['start']:.1f}s - {seg['end']:.1f}s):")
+                st.video(clip_path)
+
+            audio_data = st.audio_input(f"Grabar frase {idx + 1}", key=f"rec_{idx}")
+            toma_path = f"user_toma_{idx}.wav"
+            
+            if audio_data:
+                with open(toma_path, "wb") as f:
+                    f.write(audio_data.read())
+                score, estrellas, titulo, mensaje = evaluar_toma_divertida("audio_ref.wav", toma_path)
+                st.markdown(f"**Puntuación:** {estrellas} `{score}%` — {mensaje}")
+                mapa_tomas.append((toma_path, seg['start']))
+            
+            st.divider()
+
+    # --- PASO 4: ENSAMBLADO FINAL Y LIMPIEZA ---
+    st.header("3. Ensamblado Final")
+    
+    col_vol1, col_vol2 = st.columns(2)
+    with col_vol1:
+        vol_original = st.slider("🔊 Volumen del audio original:", min_value=0.0, max_value=1.0, value=0.2, step=0.05)
+    with col_vol2:
+        vol_usuario = st.slider("🎙️ Volumen de tus grabaciones:", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
+
+    col_gen, col_clean = st.columns([2, 1])
+    
+    with col_gen:
+        btn_generar = st.button("🎬 Generar Video Final Doblado")
+    with col_clean:
+        if st.button("🧹 Limpiar memoria y archivos temporales"):
+            eliminados = limpiar_archivos_temporales(limpiar_todo=True)
+            st.toast(f"Se eliminaron {eliminados} archivos temporales.")
+
+    if btn_generar and mapa_tomas:
+        with st.spinner("FFmpeg está mezclando y ajustando los niveles de audio..."):
             inputs = ["-i video_input.mp4"]
-            filter_complex = ""
-            mix_labels = ""
+            
+            filter_complex = f"[0:a]volume={vol_original}[a_orig];"
+            mix_labels = "[a_orig]"
+            
             for i, (path, inicio) in enumerate(mapa_tomas):
                 inputs.append(f"-i {path}")
                 ms_delay = int(inicio * 1000)
                 idx_input = i + 1
-                filter_complex += f"[{idx_input}:a]adelay={ms_delay}|{ms_delay}[a{idx_input}];"
+                filter_complex += f"[{idx_input}:a]volume={vol_usuario},adelay={ms_delay}|{ms_delay}[a{idx_input}];"
                 mix_labels += f"[a{idx_input}]"
-            count_inputs = len(mapa_tomas)
-            filter_complex += f"{mix_labels}amix=inputs={count_inputs}:duration=first[aout]"
+            
+            total_entradas = len(mapa_tomas) + 1
+            filter_complex += f"{mix_labels}amix=inputs={total_entradas}:duration=first[aout]"
             
             cmd = f"ffmpeg -y {' '.join(inputs)} -filter_complex \"{filter_complex}\" -map 0:v -map \"[aout]\" -c:v copy -c:a aac resultado.mp4"
             subprocess.run(cmd, shell=True)
             
             if os.path.exists("resultado.mp4"):
+                st.subheader("🍿 ¡Resultado de tu Doblaje!")
                 st.video("resultado.mp4")
-                st.success("¡Tu video doblado quedó listo!")
+                st.success("¡Tu doblaje ha sido completado con éxito!")
+                
+                archivos_borrados = limpiar_archivos_temporales(limpiar_todo=False)
+                st.caption(f"🧹 *Memoria optimizada: Se borraron {archivos_borrados} archivos temporales de edición.*")
