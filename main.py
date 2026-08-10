@@ -5,20 +5,23 @@ import numpy as np
 import subprocess
 import os
 import yt_dlp
+import urllib.parse
 
 st.set_page_config(page_title="App de Doblaje Fiesta 🎙️", page_icon="🎬", layout="centered")
 st.title("🎙️ ¡Juego de Doblaje Party!")
 st.write("Conviértete en actor de voz: busca una escena, graba frase por frase y descubre tu talento.")
 
-# Configuración antibloqueos para yt-dlp
-YTDLP_COMMON_OPTS = {
+# Opciones optimizadas para bajar audio/video desde URL
+YTDLP_OPTS = {
     'quiet': True,
     'no_warnings': True,
     'nocheckcertificate': True,
+    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    'outtmpl': 'video_input.mp4',
+    'overwrites': True,
     'extractor_args': {
         'youtube': {
-            'player_client': ['android', 'ios'],
-            'skip': ['hls', 'dash']
+            'player_client': ['android', 'ios']
         }
     },
     'http_headers': {
@@ -26,33 +29,8 @@ YTDLP_COMMON_OPTS = {
     }
 }
 
-def buscar_videos_youtube(busqueda, max_resultados=5):
-    opts = YTDLP_COMMON_OPTS.copy()
-    opts.update({
-        'extract_flat': 'in_playlist',
-        'skip_download': True
-    })
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        res = ydl.extract_info(f"ytsearch{max_resultados}:{busqueda}", download=False)
-        entradas = res.get('entries', [])
-        resultados = []
-        for e in entradas:
-            if e:
-                resultados.append({
-                    'id': e.get('id'),
-                    'title': e.get('title'),
-                    'url': f"https://www.youtube.com/watch?v={e.get('id')}"
-                })
-        return resultados
-
 def descargar_desde_youtube(url_youtube):
-    opts = YTDLP_COMMON_OPTS.copy()
-    opts.update({
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': 'video_input.mp4',
-        'overwrites': True,
-    })
-    with yt_dlp.YoutubeDL(opts) as ydl:
+    with yt_dlp.YoutubeDL(YTDLP_OPTS) as ydl:
         ydl.download([url_youtube])
     
     cmd_audio = "ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav"
@@ -91,31 +69,31 @@ def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
         return 75.0, "⭐⭐⭐⭐", "👍 ¡BUENA TOMA!", "Grabación lista para el montaje final."
 
 st.header("1. Elige tu Escena")
-opcion_origen = st.radio("¿De dónde obtenemos la escena?", ("Buscar en YouTube 🔍", "Subir archivo MP4 local 📁"))
+opcion_origen = st.radio("¿De dónde obtenemos la escena?", ("YouTube (Enlace / Búsqueda) 📹", "Subir archivo MP4 local 📁"))
 
-if opcion_origen == "Buscar en YouTube 🔍":
-    query = st.text_input("Escribe el nombre de la escena, clip o anime:")
-    if st.button("Buscar videos") and query:
-        with st.spinner("Buscando en YouTube..."):
-            st.session_state['busqueda_resultados'] = buscar_videos_youtube(query)
+if opcion_origen == "YouTube (Enlace / Búsqueda) 📹":
+    query = st.text_input("Escribe el nombre de la escena o pega la URL directamente:")
+    
+    if query:
+        if "youtube.com" in query or "youtu.be" in query:
+            url_final = query
+        else:
+            url_busqueda = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
+            st.markdown(f"👉 [Haz clic aquí para abrir los resultados en YouTube]({url_busqueda}) y copia el enlace del video que te guste.")
+            url_final = st.text_input("Pega aquí el enlace copiado:")
 
-    if 'busqueda_resultados' in st.session_state and st.session_state['busqueda_resultados']:
-        st.subheader("Selecciona un video de la lista:")
-        opciones = {f"{v['title']}": v for v in st.session_state['busqueda_resultados']}
-        seleccion_titulo = st.selectbox("Resultados encontrados:", list(opciones.keys()))
-        video_sel = opciones[seleccion_titulo]
-        
-        st.write("**Vista previa:**")
-        st.video(video_sel['url'])
-        
-        if st.button("Usar esta escena"):
-            with st.spinner("Descargando video y preparando audio..."):
-                try:
-                    descargar_desde_youtube(video_sel['url'])
-                    st.session_state['archivos_listos'] = True
-                    st.success("¡Escena lista para doblar!")
-                except Exception as e:
-                    st.error(f"Error al descargar: {e}")
+        if url_final:
+            st.write("**Vista previa del video:**")
+            st.video(url_final)
+            
+            if st.button("Cargar esta escena"):
+                with st.spinner("Descargando video y procesando audio..."):
+                    try:
+                        descargar_desde_youtube(url_final)
+                        st.session_state['archivos_listos'] = True
+                        st.success("¡Escena lista para doblar!")
+                    except Exception as e:
+                        st.error(f"Error al descargar: {e}")
 else:
     video_file = st.file_uploader("Sube tu archivo de video (MP4)", type=["mp4"])
     audio_ref = st.file_uploader("Sube el audio de referencia (WAV/MP3)", type=["wav", "mp3"])
