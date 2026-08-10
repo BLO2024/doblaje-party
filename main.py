@@ -13,24 +13,6 @@ st.set_page_config(page_title="App de Doblaje Fiesta 🎙️", page_icon="🎬",
 st.title("🎙️ ¡Juego de Doblaje Party!")
 st.write("Conviértete en actor de voz: busca una escena, graba frase por frase y descubre tu talento.")
 
-# Configuración de yt-dlp con soporte para cookies
-YTDLP_OPTS = {
-    'quiet': True,
-    'no_warnings': True,
-    'nocheckcertificate': True,
-    'format': 'best[ext=mp4]/best',
-    'outtmpl': 'video_input.mp4',
-    'overwrites': True,
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'es-ES,es;q=0.9',
-    }
-}
-
-# Si existe el archivo cookies.txt en la raíz del proyecto, yt-dlp lo utilizará
-if os.path.exists("cookies.txt"):
-    YTDLP_OPTS['cookiefile'] = 'cookies.txt'
-
 def obtener_id_youtube(url):
     """Extrae el ID único del video de YouTube"""
     patron = r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})'
@@ -53,24 +35,31 @@ def mostrar_reproductor_iframe(url_video):
     else:
         st.video(url_video)
 
-def descargar_con_invidious(video_id):
-    """Opción 1: Intenta descargar el video a través del proxy Invidious"""
+def descargar_con_cobalt_api(url_youtube):
+    """Método 1: Estilo Y2Mate usando la API gratuita de Cobalt.tools"""
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "url": url_youtube,
+        "videoQuality": "720"
+    }
+    
+    # Servidores/instancias públicas de Cobalt
     instancias = [
-        "https://invidious.nerdvpn.de",
-        "https://inv.nadeko.net",
-        "https://invidious.no-name-given.de"
+        "https://api.cobalt.tools/api/json",
+        "https://cobalt-api.kwiatek.xyz/api/json"
     ]
     
-    for instancia in instancias:
+    for api_url in instancias:
         try:
-            api_url = f"{instancia}/api/v1/videos/{video_id}"
-            res = requests.get(api_url, timeout=10)
+            res = requests.post(api_url, json=payload, headers=headers, timeout=12)
             if res.status_code == 200:
                 data = res.json()
-                formatos = data.get('formatStreams', [])
-                if formatos:
-                    stream_url = formatos[0]['url']
-                    video_bytes = requests.get(stream_url, timeout=30).content
+                download_url = data.get("url")
+                if download_url:
+                    video_bytes = requests.get(download_url, timeout=40).content
                     with open("video_input.mp4", "wb") as f:
                         f.write(video_bytes)
                     return True
@@ -78,21 +67,28 @@ def descargar_con_invidious(video_id):
             continue
     return False
 
-def descargar_desde_youtube(url_youtube):
-    """Sistema híbrido de descarga (Invidious + yt-dlp con cookies de respaldo)"""
-    video_id = obtener_id_youtube(url_youtube)
-    exito = False
-    
-    # Intento 1: Descarga mediante proxy de Invidious
-    if video_id:
-        exito = descargar_con_invidious(video_id)
-    
-    # Intento 2: Respando con yt-dlp usando cookies.txt si la Opción 1 falla
-    if not exito:
-        with yt_dlp.YoutubeDL(YTDLP_OPTS) as ydl:
-            ydl.download([url_youtube])
+def descargar_con_ytdlp_flexible(url_youtube):
+    """Método 2: Respaldo con yt-dlp usando formatos flexibles (fusión automática)"""
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        # Acepta cualquier formato combinado o baja mejor video + mejor audio
+        'format': 'b/best/bestvideo+bestaudio',
+        'outtmpl': 'video_input.mp4',
+        'overwrites': True,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([url_youtube])
 
-    # Extracción de audio PCM con FFmpeg a 16kHz para Whisper
+def descargar_desde_youtube(url_youtube):
+    """Intenta primero el método estilo Y2Mate (Cobalt) y luego yt-dlp flexible"""
+    exito = descargar_con_cobalt_api(url_youtube)
+    
+    if not exito:
+        descargar_con_ytdlp_flexible(url_youtube)
+
+    # Extraer audio PCM con FFmpeg para Whisper
     cmd_audio = "ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav"
     subprocess.run(cmd_audio, shell=True)
 
@@ -147,13 +143,13 @@ if opcion_origen == "YouTube (Enlace / Búsqueda) 📹":
             mostrar_reproductor_iframe(url_final)
             
             if st.button("Usar esta escena"):
-                with st.spinner("Procesando escena..."):
+                with st.spinner("Descargando escena vía API..."):
                     try:
                         descargar_desde_youtube(url_final)
                         st.session_state['archivos_listos'] = True
                         st.success("¡Escena lista para doblar!")
                     except Exception as e:
-                        st.error(f"Error al descargar la escena: {e}")
+                        st.error(f"Error al procesar la escena: {e}")
 else:
     video_file = st.file_uploader("Sube tu archivo de video (MP4)", type=["mp4"])
     audio_ref = st.file_uploader("Sube el audio de referencia (WAV/MP3)", type=["wav", "mp3"])
