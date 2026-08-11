@@ -1,8 +1,6 @@
 import streamlit as st
 import whisper
 import librosa
-import librosa.display
-import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
 import os
@@ -42,7 +40,7 @@ if 'restaurado' not in st.session_state:
 if 'current_idx' not in st.session_state:
     st.session_state['current_idx'] = 0
 
-# Estilos CSS estilo Cabina de Doblaje
+# Estilos CSS
 st.markdown("""
     <style>
     .subtitle-box {
@@ -111,36 +109,44 @@ def extraer_fragmento_audio_ref(inicio, fin, output_audio_path):
     cmd = f"ffmpeg -y -ss {inicio} -i audio_ref.wav -t {duracion} -acodec pcm_s16le {output_audio_path}"
     subprocess.run(cmd, shell=True)
 
-def generar_grafico_ondas(audio_ref_path, audio_user_path=None):
-    """Genera el gráfico comparativo de ondas de audio (estudio de doblaje)"""
-    fig, ax = plt.subplots(figsize=(10, 3), facecolor='#0d1117')
-    ax.set_facecolor('#0d1117')
-    
-    if os.path.exists(audio_ref_path):
-        y_ref, sr_ref = librosa.load(audio_ref_path, sr=None)
-        librosa.display.waveshow(y_ref, sr=sr_ref, ax=ax, color='#00d2ff', alpha=0.7, label='Original')
+def mostrar_grafico_ondas_nativo(audio_ref_path, audio_user_path=None, samples=300):
+    """Genera una vista de ondas usando el gráfico nativo de Streamlit (sin dependencias de matplotlib)"""
+    try:
+        y_ref, _ = librosa.load(audio_ref_path, sr=8000)
+        
+        # Reducir resolución para renderizado rápido
+        step_ref = max(1, len(y_ref) // samples)
+        onda_ref = np.abs(y_ref[::step_ref][:samples])
 
-    if audio_user_path and os.path.exists(audio_user_path):
-        y_user, sr_user = librosa.load(audio_user_path, sr=None)
-        librosa.display.waveshow(y_user, sr=sr_user, ax=ax, color='#ff007f', alpha=0.7, label='Tu Grabación')
+        data_dict = {"Original (Azul)": onda_ref}
 
-    ax.axis('off')
-    plt.tight_layout()
-    return fig
+        if audio_user_path and os.path.exists(audio_user_path):
+            y_user, _ = librosa.load(audio_user_path, sr=8000)
+            step_user = max(1, len(y_user) // samples)
+            onda_user = np.abs(y_user[::step_user][:samples])
+            
+            # Ajustar longitudes para que coincidan
+            if len(onda_user) < len(onda_ref):
+                onda_user = np.pad(onda_user, (0, len(onda_ref) - len(onda_user)))
+            else:
+                onda_user = onda_user[:len(onda_ref)]
+                
+            data_dict["Tu Grabación (Rojo)"] = onda_user
+
+        st.line_chart(data_dict, height=180)
+    except Exception as e:
+        st.caption(f"No se pudo generar la vista previa de onda: {e}")
 
 def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
-    """Sistema de calificación optimizado para micrófonos de teléfono (más flexible y justo)"""
     try:
         y_ref, sr_ref = librosa.load(audio_ref_path)
         y_user, sr_user = librosa.load(audio_usuario_path)
         dur_ref = librosa.get_duration(y=y_ref, sr=sr_ref)
         dur_user = librosa.get_duration(y=y_user, sr=sr_user)
         
-        # Comparación de tiempo más permisiva (descuento menor por desfase)
         diferencia_tiempo = abs(dur_ref - dur_user)
         puntaje_tiempo = max(40, 100 - (diferencia_tiempo * 12))
 
-        # Comparación de tono
         pitches_ref, _ = librosa.piptrack(y=y_ref, sr=sr_ref)
         pitches_user, _ = librosa.piptrack(y=y_user, sr=sr_user)
         p_ref = pitches_ref[pitches_ref > 0]
@@ -152,7 +158,6 @@ def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
         else:
             puntaje_pitch = 80.0
 
-        # Calificación base alta para premiar la grabación
         score = round(min(100, max(50, (puntaje_tiempo * 0.5) + (puntaje_pitch * 0.5) + 15)), 1)
 
         if score >= 80:
@@ -163,7 +168,7 @@ def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
         elif score >= 50:
             return score, "⭐⭐⭐", "🎬 ¡BUENA TOMA!", "Cumple muy bien para el montaje de la escena."
         else:
-            return score, "⭐⭐", "🤪 ¡VOZ DERTIDA!", "Buen intento, le pusiste ganas."
+            return score, "⭐⭐", "🤪 ¡VOZ DIVERTIDA!", "Buen intento, le pusiste ganas."
     except Exception:
         return 85.0, "⭐⭐⭐⭐", "👍 ¡GRABACIÓN COMPLETADA!", "Toma guardada para el montaje."
 
@@ -249,7 +254,6 @@ if st.session_state.get('segments'):
     curr_idx = st.session_state['current_idx']
     seg_actual = segments[curr_idx]
 
-    # Controles de navegación superiores (Flechas de avance/retroceso)
     c_prev, c_info, c_next = st.columns([1, 3, 1])
     with c_prev:
         if st.button("⬅️ Frase Anterior") and curr_idx > 0:
@@ -262,7 +266,6 @@ if st.session_state.get('segments'):
             st.session_state['current_idx'] += 1
             st.rerun()
 
-    # Recorte del video y audio de la frase actual
     clip_path = f"clip_preview_{curr_idx}.mp4"
     audio_ref_seg_path = f"audio_ref_seg_{curr_idx}.wav"
     
@@ -271,12 +274,10 @@ if st.session_state.get('segments'):
     if not os.path.exists(audio_ref_seg_path):
         extraer_fragmento_audio_ref(seg_actual['start'], seg_actual['end'], audio_ref_seg_path)
 
-    # REPRODUCTOR DE VIDEO CENTRADO
     col_v1, col_v2, col_v3 = st.columns([1, 2, 1])
     with col_v2:
         st.video(clip_path)
         
-        # Teleprompter con el texto actual
         st.markdown(f"""
             <div class="subtitle-box">
                 <p class="subtitle-text">"{seg_actual['text']}"</p>
@@ -284,13 +285,12 @@ if st.session_state.get('segments'):
             </div>
         """, unsafe_allow_html=True)
 
-        # MUESTRA ONDAS DE AUDIO DE REFERENCIA Y GRABACIÓN
         toma_user_path = f"user_toma_{curr_idx}.wav"
-        fig_ondas = generar_grafico_ondas(audio_ref_seg_path, toma_user_path if os.path.exists(toma_user_path) else None)
-        st.pyplot(fig_ondas)
-        st.caption("🔵 Onda Original vs 💖 Tu Grabación (Alinea los picos para un Lip-Sync perfecto)")
+        
+        # Muestra la gráfica de ondas nativa
+        mostrar_grafico_ondas_nativo(audio_ref_seg_path, toma_user_path if os.path.exists(toma_user_path) else None)
+        st.caption("📈 Comparativa de ondas de audio (Original vs Tu Grabación)")
 
-        # GRABACIÓN DE AUDIO Y EVALUACIÓN
         audio_data = st.audio_input(f"Grabar frase {curr_idx + 1}", key=f"rec_single_{curr_idx}")
         if audio_data:
             with open(toma_user_path, "wb") as f:
