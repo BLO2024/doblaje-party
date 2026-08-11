@@ -1,6 +1,8 @@
 import streamlit as st
 import whisper
 import librosa
+import librosa.display
+import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
 import os
@@ -10,11 +12,9 @@ import yt_dlp
 
 st.set_page_config(page_title="App de Doblaje Party 🎙️", page_icon="🎬", layout="wide")
 
-# ARCHIVO PARA GUARDAR LA PERSISTENCIA DE LA SESIÓN
 CACHE_FILE = "cache_sesion.json"
 
 def guardar_cache_sesion(datos):
-    """Guarda el estado actual en un archivo JSON para persistencia al recargar"""
     try:
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(datos, f, ensure_ascii=False, indent=2)
@@ -22,7 +22,6 @@ def guardar_cache_sesion(datos):
         st.error(f"Error al guardar caché: {e}")
 
 def cargar_cache_sesion():
-    """Carga el estado guardado si existe"""
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
@@ -31,7 +30,7 @@ def cargar_cache_sesion():
             return None
     return None
 
-# --- RESTAURACIÓN AUTOMÁTICA AL INICIAR LA APP ---
+# Restauración de sesión
 if 'restaurado' not in st.session_state:
     cache_previo = cargar_cache_sesion()
     if cache_previo:
@@ -40,39 +39,38 @@ if 'restaurado' not in st.session_state:
         st.session_state['selected_url'] = cache_previo.get('selected_url', None)
     st.session_state['restaurado'] = True
 
-# Estilos CSS
+if 'current_idx' not in st.session_state:
+    st.session_state['current_idx'] = 0
+
+# Estilos CSS estilo Cabina de Doblaje
 st.markdown("""
     <style>
-    .teleprompter-box {
-        background-color: #111827;
-        border-left: 5px solid #3B82F6;
+    .subtitle-box {
+        background-color: #0d1117;
+        border: 2px solid #30363d;
+        border-radius: 10px;
         padding: 15px;
-        border-radius: 8px;
+        text-align: center;
+        margin-top: 10px;
         margin-bottom: 15px;
     }
-    .teleprompter-text {
-        font-size: 22px;
+    .subtitle-text {
+        font-size: 26px;
         font-weight: bold;
-        color: #F3F4F6;
+        color: #58a6ff;
         margin: 0;
     }
-    .time-badge {
-        font-size: 12px;
-        color: #9CA3AF;
+    .time-info {
+        font-size: 14px;
+        color: #8b949e;
     }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🎙️ ¡Juego de Doblaje Party!")
-st.write("Carga tu escena (vía MP4 local, TikTok, enlace de YouTube o Buscador), graba tus voces y genera tu doblaje.")
 
 def buscar_videos_yt(query, max_results=4):
-    ydl_opts = {
-        'quiet': True,
-        'extract_flat': 'in_playlist',
-        'skip_download': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    }
+    ydl_opts = {'quiet': True, 'extract_flat': 'in_playlist', 'skip_download': True}
     resultados = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
@@ -92,11 +90,9 @@ def descargar_escena(url):
     opts = {
         'quiet': True,
         'no_warnings': True,
-        'nocheckcertificate': True,
         'format': 'worstvideo[ext=mp4]+bestaudio[ext=m4a]/worst[ext=mp4]/worst',
         'outtmpl': 'video_input.mp4',
         'overwrites': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'referer': 'https://www.tiktok.com/',
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -110,23 +106,77 @@ def recortar_fragmento_video(inicio, fin, output_path):
     cmd = f"ffmpeg -y -ss {inicio} -i video_input.mp4 -t {duracion} -c:v copy -c:a aac {output_path}"
     subprocess.run(cmd, shell=True)
 
+def extraer_fragmento_audio_ref(inicio, fin, output_audio_path):
+    duracion = fin - inicio
+    cmd = f"ffmpeg -y -ss {inicio} -i audio_ref.wav -t {duracion} -acodec pcm_s16le {output_audio_path}"
+    subprocess.run(cmd, shell=True)
+
+def generar_grafico_ondas(audio_ref_path, audio_user_path=None):
+    """Genera el gráfico comparativo de ondas de audio (estudio de doblaje)"""
+    fig, ax = plt.subplots(figsize=(10, 3), facecolor='#0d1117')
+    ax.set_facecolor('#0d1117')
+    
+    if os.path.exists(audio_ref_path):
+        y_ref, sr_ref = librosa.load(audio_ref_path, sr=None)
+        librosa.display.waveshow(y_ref, sr=sr_ref, ax=ax, color='#00d2ff', alpha=0.7, label='Original')
+
+    if audio_user_path and os.path.exists(audio_user_path):
+        y_user, sr_user = librosa.load(audio_user_path, sr=None)
+        librosa.display.waveshow(y_user, sr=sr_user, ax=ax, color='#ff007f', alpha=0.7, label='Tu Grabación')
+
+    ax.axis('off')
+    plt.tight_layout()
+    return fig
+
+def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
+    """Sistema de calificación optimizado para micrófonos de teléfono (más flexible y justo)"""
+    try:
+        y_ref, sr_ref = librosa.load(audio_ref_path)
+        y_user, sr_user = librosa.load(audio_usuario_path)
+        dur_ref = librosa.get_duration(y=y_ref, sr=sr_ref)
+        dur_user = librosa.get_duration(y=y_user, sr=sr_user)
+        
+        # Comparación de tiempo más permisiva (descuento menor por desfase)
+        diferencia_tiempo = abs(dur_ref - dur_user)
+        puntaje_tiempo = max(40, 100 - (diferencia_tiempo * 12))
+
+        # Comparación de tono
+        pitches_ref, _ = librosa.piptrack(y=y_ref, sr=sr_ref)
+        pitches_user, _ = librosa.piptrack(y=y_user, sr=sr_user)
+        p_ref = pitches_ref[pitches_ref > 0]
+        p_user = pitches_user[pitches_user > 0]
+        
+        if len(p_ref) > 0 and len(p_user) > 0:
+            dif_pitch = abs(np.median(p_ref) - np.median(p_user)) / np.median(p_ref)
+            puntaje_pitch = max(50, 100 - (dif_pitch * 40))
+        else:
+            puntaje_pitch = 80.0
+
+        # Calificación base alta para premiar la grabación
+        score = round(min(100, max(50, (puntaje_tiempo * 0.5) + (puntaje_pitch * 0.5) + 15)), 1)
+
+        if score >= 80:
+            st.balloons()
+            return score, "⭐⭐⭐⭐⭐", "🏆 ¡NIVEL ACTOR DE HOLLYWOOD!", "¡Excelente sincronización y energía!"
+        elif score >= 65:
+            return score, "⭐⭐⭐⭐", "🎙️ ¡MODO FANDUB ACTIVADO!", "Suenas increíble, listo para la mezcla final."
+        elif score >= 50:
+            return score, "⭐⭐⭐", "🎬 ¡BUENA TOMA!", "Cumple muy bien para el montaje de la escena."
+        else:
+            return score, "⭐⭐", "🤪 ¡VOZ DERTIDA!", "Buen intento, le pusiste ganas."
+    except Exception:
+        return 85.0, "⭐⭐⭐⭐", "👍 ¡GRABACIÓN COMPLETADA!", "Toma guardada para el montaje."
+
 def limpiar_archivos_temporales(limpiar_todo=False):
-    patrones = [
-        "clip_preview_*.mp4",
-        "user_toma_*.wav",
-        "audio_ref.wav",
-        "audio_temp.wav"
-    ]
+    patrones = ["clip_preview_*.mp4", "user_toma_*.wav", "audio_ref_seg_*.wav", "audio_ref.wav"]
     if limpiar_todo:
-        patrones.append("video_input.mp4")
-        patrones.append("resultado.mp4")
+        patrones.extend(["video_input.mp4", "resultado.mp4"])
         if os.path.exists(CACHE_FILE):
             os.remove(CACHE_FILE)
 
     archivos_eliminados = 0
     for patron in patrones:
-        archivos = glob.glob(patron)
-        for archivo in archivos:
+        for archivo in glob.glob(patron):
             try:
                 os.remove(archivo)
                 archivos_eliminados += 1
@@ -134,204 +184,167 @@ def limpiar_archivos_temporales(limpiar_todo=False):
                 pass
     return archivos_eliminados
 
-def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
-    try:
-        y_ref, sr_ref = librosa.load(audio_ref_path)
-        y_user, sr_user = librosa.load(audio_usuario_path)
-        dur_ref = librosa.get_duration(y=y_ref, sr=sr_ref)
-        dur_user = librosa.get_duration(y=y_user, sr=sr_user)
-        diferencia_tiempo = abs(dur_ref - dur_user)
-        puntaje_tiempo = max(0, 100 - (diferencia_tiempo * 25))
-        pitches_ref, _ = librosa.piptrack(y=y_ref, sr=sr_ref)
-        pitches_user, _ = librosa.piptrack(y=y_user, sr=sr_user)
-        p_ref = pitches_ref[pitches_ref > 0]
-        p_user = pitches_user[pitches_user > 0]
-        if len(p_ref) > 0 and len(p_user) > 0:
-            dif_pitch = abs(np.median(p_ref) - np.median(p_user)) / np.median(p_ref)
-            puntaje_pitch = max(0, 100 - (dif_pitch * 80))
-        else:
-            puntaje_pitch = 65.0
-        score = round(min(100, max(0, (puntaje_tiempo * 0.5) + (puntaje_pitch * 0.5))), 1)
-        if score >= 85:
-            st.balloons()
-            return score, "⭐⭐⭐⭐⭐", "🏆 ¡NIVEL ACTOR DE HOLLYWOOD!", "Le quitaste el trabajo al actor original."
-        elif score >= 70:
-            return score, "⭐⭐⭐⭐", "🎙️ ¡MODO FANDUB ACTIVADO!", "Suenas listo para subir tu reel."
-        elif score >= 50:
-            return score, "⭐⭐⭐", "🎬 ¡DOBLAJE DE BAJO PRESUPUESTO!", "Le pusiste ganas, que es lo que importa."
-        elif score >= 30:
-            return score, "⭐⭐", "🤪 ¡VOZ DE PERSONAJE RARO!", "Parece que estabas doblando un meme."
-        else:
-            return score, "⭐", "🐓 ¡EFECTO GALLO!", "Ni el micrófono entendió qué dijiste."
-    except Exception:
-        return 75.0, "⭐⭐⭐⭐", "👍 ¡BUENA TOMA!", "Grabación lista para el montaje final."
-
-# MENSAJE SI HAY UNA SESIÓN PREVIA ACTIVA
-if os.path.exists("video_input.mp4"):
-    st.info("🔄 **Sesión previa detectada:** Tu escena actual está cargada en caché. Puedes continuar doblando o reiniciar con el botón 'Nueva Escena / Limpiar todo'.")
-
 # --- PASO 1: SELECCIÓN DE ESCENA ---
 st.header("1. Carga tu Escena")
 
 metodo_origen = st.radio(
-    "Selecciona cómo quieres cargar la escena:",
-    ("Subir archivo MP4 local 📁", "Pegar enlace directo (TikTok / YouTube) 🔗", "Buscador integrado 🔍")
+    "Selecciona origen de la escena:",
+    ("Subir archivo MP4 local 📁", "Pegar enlace directo (TikTok / YouTube) 🔗", "Buscador integrado 🔍"),
+    horizontal=True
 )
 
 if metodo_origen == "Subir archivo MP4 local 📁":
-    uploaded_file = st.file_uploader("Elige un archivo de video MP4 desde tu dispositivo:", type=["mp4"])
+    uploaded_file = st.file_uploader("Subir MP4:", type=["mp4"])
     if uploaded_file is not None:
         with open("video_input.mp4", "wb") as f:
             f.write(uploaded_file.read())
-        cmd_audio = "ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav"
-        subprocess.run(cmd_audio, shell=True)
+        subprocess.run("ffmpeg -y -i video_input.mp4 -vn -acodec pcm_s16le -ar 16000 audio_ref.wav", shell=True)
         st.session_state['archivos_listos'] = True
         guardar_cache_sesion({"archivos_listos": True})
-        st.success("¡Video subido y guardado en caché!")
+        st.success("¡Video cargado con éxito!")
 
 elif metodo_origen == "Pegar enlace directo (TikTok / YouTube) 🔗":
     url_directa = st.text_input("Pega el enlace de TikTok o YouTube:")
-    if url_directa and st.button("Descargar escena desde el enlace"):
-        with st.spinner("Descargando video..."):
-            try:
-                descargar_escena(url_directa)
-                st.session_state['archivos_listos'] = True
-                guardar_cache_sesion({"archivos_listos": True, "selected_url": url_directa})
-                st.success("¡Escena descargada y guardada en caché!")
-            except Exception as e:
-                st.error(f"Error al descargar la URL: {e}")
+    if url_directa and st.button("Descargar"):
+        with st.spinner("Descargando..."):
+            descargar_escena(url_directa)
+            st.session_state['archivos_listos'] = True
+            guardar_cache_sesion({"archivos_listos": True, "selected_url": url_directa})
+            st.success("¡Escena lista!")
 
 elif metodo_origen == "Buscador integrado 🔍":
-    query = st.text_input("Escribe el nombre de la serie, anime o película que quieres doblar:")
+    query = st.text_input("Buscar video:")
     if query:
-        with st.spinner("Buscando las mejores escenas..."):
-            resultados = buscar_videos_yt(query, max_results=4)
-        
-        if resultados:
-            col1, col2, col3, col4 = st.columns(4)
-            cols = [col1, col2, col3, col4]
-            for idx, item in enumerate(resultados):
-                with cols[idx]:
-                    st.image(item['thumbnail'], use_container_width=True)
-                    st.caption(f"**{item['title']}**")
-                    if st.button(f"🎬 Usar esta escena", key=f"btn_{idx}"):
-                        st.session_state['selected_url'] = item['url']
-
-    if 'selected_url' in st.session_state and st.session_state['selected_url']:
-        if st.button("📥 Descargar escena seleccionada"):
-            with st.spinner("Procesando escena..."):
-                try:
-                    descargar_escena(st.session_state['selected_url'])
+        resultados = buscar_videos_yt(query)
+        cols = st.columns(len(resultados))
+        for idx, item in enumerate(resultados):
+            with cols[idx]:
+                st.image(item['thumbnail'], use_container_width=True)
+                st.caption(item['title'])
+                if st.button("Usar", key=f"btn_{idx}"):
+                    descargar_escena(item['url'])
                     st.session_state['archivos_listos'] = True
-                    guardar_cache_sesion({"archivos_listos": True, "selected_url": st.session_state['selected_url']})
-                    st.success("¡Escena guardada en caché y lista!")
-                except Exception as e:
-                    st.error(f"Error al descargar la escena: {e}")
+                    guardar_cache_sesion({"archivos_listos": True, "selected_url": item['url']})
+                    st.success("¡Escena descargada!")
 
 # --- PASO 2: EXTRAER DIÁLOGOS ---
 if st.session_state.get('archivos_listos', False) or os.path.exists("video_input.mp4"):
-    st.divider()
-    if st.button("🔍 Extraer Diálogos con IA"):
-        with st.spinner("Whisper está escuchando y separando las frases..."):
-            model = whisper.load_model("base")
-            result = model.transcribe("audio_ref.wav")
-            st.session_state['segments'] = result['segments']
-            guardar_cache_sesion({
-                "archivos_listos": True,
-                "segments": result['segments'],
-                "selected_url": st.session_state.get('selected_url', '')
-            })
-            st.success("¡Diálogos extraídos y guardados en memoria!")
+    if 'segments' not in st.session_state or st.session_state['segments'] is None:
+        if st.button("🔍 Extraer Diálogos con IA (Whisper)"):
+            with st.spinner("Procesando diálogos..."):
+                model = whisper.load_model("base")
+                result = model.transcribe("audio_ref.wav")
+                st.session_state['segments'] = result['segments']
+                guardar_cache_sesion({
+                    "archivos_listos": True,
+                    "segments": result['segments']
+                })
+                st.rerun()
 
-# --- PASO 3: ESTUDIO DE GRABACIÓN INTERACTIVO ---
+# --- PASO 3: ESTUDIO DE DOBLAJE PASO A PASO ---
 if st.session_state.get('segments'):
     st.divider()
-    st.header("2. Estudio de Grabación 🎬")
-
     segments = st.session_state['segments']
-    mapa_tomas = []
+    total_frases = len(segments)
+    curr_idx = st.session_state['current_idx']
+    seg_actual = segments[curr_idx]
 
-    col_video, col_estudio = st.columns([1, 1], gap="large")
+    # Controles de navegación superiores (Flechas de avance/retroceso)
+    c_prev, c_info, c_next = st.columns([1, 3, 1])
+    with c_prev:
+        if st.button("⬅️ Frase Anterior") and curr_idx > 0:
+            st.session_state['current_idx'] -= 1
+            st.rerun()
+    with c_info:
+        st.markdown(f"<h3 style='text-align: center;'>Frase {curr_idx + 1} de {total_frases}</h3>", unsafe_allow_html=True)
+    with c_next:
+        if st.button("Siguiente Frase ➡️") and curr_idx < total_frases - 1:
+            st.session_state['current_idx'] += 1
+            st.rerun()
 
-    with col_video:
-        st.subheader("📺 Escena Completa")
-        if os.path.exists("video_input.mp4"):
-            st.video("video_input.mp4")
+    # Recorte del video y audio de la frase actual
+    clip_path = f"clip_preview_{curr_idx}.mp4"
+    audio_ref_seg_path = f"audio_ref_seg_{curr_idx}.wav"
+    
+    if not os.path.exists(clip_path):
+        recortar_fragmento_video(seg_actual['start'], seg_actual['end'], clip_path)
+    if not os.path.exists(audio_ref_seg_path):
+        extraer_fragmento_audio_ref(seg_actual['start'], seg_actual['end'], audio_ref_seg_path)
 
-    with col_estudio:
-        st.subheader("🎙️ Teleprompter & Grabación")
+    # REPRODUCTOR DE VIDEO CENTRADO
+    col_v1, col_v2, col_v3 = st.columns([1, 2, 1])
+    with col_v2:
+        st.video(clip_path)
         
-        for idx, seg in enumerate(segments):
-            st.markdown(f"""
-                <div class="teleprompter-box">
-                    <span class="time-badge">Frase {idx + 1} | Tiempo: {seg['start']:.1f}s - {seg['end']:.1f}s</span>
-                    <p class="teleprompter-text">"{seg['text']}"</p>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            clip_path = f"clip_preview_{idx}.mp4"
-            if st.button(f"▶️ Ver fragmento de la frase {idx + 1}", key=f"prev_btn_{idx}"):
-                with st.spinner("Generando vista previa..."):
-                    recortar_fragmento_video(seg['start'], seg['end'], clip_path)
-                
-            if os.path.exists(clip_path):
-                st.caption(f"🎬 Fragmento ({seg['start']:.1f}s - {seg['end']:.1f}s):")
-                st.video(clip_path)
+        # Teleprompter con el texto actual
+        st.markdown(f"""
+            <div class="subtitle-box">
+                <p class="subtitle-text">"{seg_actual['text']}"</p>
+                <span class="time-info">Tiempo: {seg_actual['start']:.1f}s - {seg_actual['end']:.1f}s</span>
+            </div>
+        """, unsafe_allow_html=True)
 
-            audio_data = st.audio_input(f"Grabar frase {idx + 1}", key=f"rec_{idx}")
-            toma_path = f"user_toma_{idx}.wav"
-            
-            if audio_data:
-                with open(toma_path, "wb") as f:
-                    f.write(audio_data.read())
-                score, estrellas, titulo, mensaje = evaluar_toma_divertida("audio_ref.wav", toma_path)
-                st.markdown(f"**Puntuación:** {estrellas} `{score}%` — {mensaje}")
-            
-            if os.path.exists(toma_path):
-                mapa_tomas.append((toma_path, seg['start']))
-            
-            st.divider()
+        # MUESTRA ONDAS DE AUDIO DE REFERENCIA Y GRABACIÓN
+        toma_user_path = f"user_toma_{curr_idx}.wav"
+        fig_ondas = generar_grafico_ondas(audio_ref_seg_path, toma_user_path if os.path.exists(toma_user_path) else None)
+        st.pyplot(fig_ondas)
+        st.caption("🔵 Onda Original vs 💖 Tu Grabación (Alinea los picos para un Lip-Sync perfecto)")
 
-    # --- PASO 4: ENSAMBLADO FINAL Y LIMPIEZA ---
+        # GRABACIÓN DE AUDIO Y EVALUACIÓN
+        audio_data = st.audio_input(f"Grabar frase {curr_idx + 1}", key=f"rec_single_{curr_idx}")
+        if audio_data:
+            with open(toma_user_path, "wb") as f:
+                f.write(audio_data.read())
+            score, estrellas, titulo, mensaje = evaluar_toma_divertida(audio_ref_seg_path, toma_user_path)
+            st.markdown(f"**Puntuación:** {estrellas} `{score}%` — {mensaje}")
+            st.rerun()
+
+    # --- PASO 4: ENSAMBLADO FINAL ---
+    st.divider()
     st.header("3. Ensamblado Final")
     
     col_vol1, col_vol2 = st.columns(2)
     with col_vol1:
-        vol_original = st.slider("🔊 Volumen del audio original:", min_value=0.0, max_value=1.0, value=0.2, step=0.05)
+        vol_original = st.slider("🔊 Volumen del audio original:", 0.0, 1.0, 0.2, 0.05)
     with col_vol2:
-        vol_usuario = st.slider("🎙️ Volumen de tus grabaciones:", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
+        vol_usuario = st.slider("🎙️ Volumen de tus grabaciones:", 0.5, 3.0, 1.5, 0.1)
 
-    col_gen, col_clean = st.columns([2, 1])
-    
-    with col_gen:
-        btn_generar = st.button("🎬 Generar Video Final Doblado")
-    with col_clean:
-        if st.button("🔄 Nueva Escena / Limpiar todo"):
+    c_gen, c_clean = st.columns([2, 1])
+    with c_gen:
+        if st.button("🎬 Generar Video Final Doblado", type="primary"):
+            mapa_tomas = []
+            for i, seg in enumerate(segments):
+                path_toma = f"user_toma_{i}.wav"
+                if os.path.exists(path_toma):
+                    mapa_tomas.append((path_toma, seg['start']))
+
+            if not mapa_tomas:
+                st.warning("No has grabado ninguna frase aún.")
+            else:
+                with st.spinner("Ensamblando doblaje final..."):
+                    inputs = ["-i video_input.mp4"]
+                    filter_complex = f"[0:a]volume={vol_original}[a_orig];"
+                    mix_labels = "[a_orig]"
+                    
+                    for i, (path, inicio) in enumerate(mapa_tomas):
+                        inputs.append(f"-i {path}")
+                        ms_delay = int(inicio * 1000)
+                        idx_input = i + 1
+                        filter_complex += f"[{idx_input}:a]volume={vol_usuario},adelay={ms_delay}|{ms_delay}[a{idx_input}];"
+                        mix_labels += f"[a{idx_input}]"
+                    
+                    total_entradas = len(mapa_tomas) + 1
+                    filter_complex += f"{mix_labels}amix=inputs={total_entradas}:duration=first[aout]"
+                    
+                    cmd = f"ffmpeg -y {' '.join(inputs)} -filter_complex \"{filter_complex}\" -map 0:v -map \"[aout]\" -c:v copy -c:a aac resultado.mp4"
+                    subprocess.run(cmd, shell=True)
+                    
+                    if os.path.exists("resultado.mp4"):
+                        st.subheader("🍿 ¡Resultado Final!")
+                        st.video("resultado.mp4")
+
+    with c_clean:
+        if st.button("🔄 Nueva Escena / Reiniciar"):
             limpiar_archivos_temporales(limpiar_todo=True)
             st.session_state.clear()
             st.rerun()
-
-    if btn_generar and mapa_tomas:
-        with st.spinner("FFmpeg está mezclando y ajustando los niveles de audio..."):
-            inputs = ["-i video_input.mp4"]
-            
-            filter_complex = f"[0:a]volume={vol_original}[a_orig];"
-            mix_labels = "[a_orig]"
-            
-            for i, (path, inicio) in enumerate(mapa_tomas):
-                inputs.append(f"-i {path}")
-                ms_delay = int(inicio * 1000)
-                idx_input = i + 1
-                filter_complex += f"[{idx_input}:a]volume={vol_usuario},adelay={ms_delay}|{ms_delay}[a{idx_input}];"
-                mix_labels += f"[a{idx_input}]"
-            
-            total_entradas = len(mapa_tomas) + 1
-            filter_complex += f"{mix_labels}amix=inputs={total_entradas}:duration=first[aout]"
-            
-            cmd = f"ffmpeg -y {' '.join(inputs)} -filter_complex \"{filter_complex}\" -map 0:v -map \"[aout]\" -c:v copy -c:a aac resultado.mp4"
-            subprocess.run(cmd, shell=True)
-            
-            if os.path.exists("resultado.mp4"):
-                st.subheader("🍿 ¡Resultado de tu Doblaje!")
-                st.video("resultado.mp4")
-                st.success("¡Tu doblaje ha sido completado con éxito!")
