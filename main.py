@@ -1,5 +1,6 @@
 import streamlit as st
 import whisper
+import librosa
 import numpy as np
 import subprocess
 import os
@@ -39,7 +40,7 @@ if 'restaurado' not in st.session_state:
 if 'current_idx' not in st.session_state:
     st.session_state['current_idx'] = 0
 
-# Estilos CSS
+# Estilos CSS estilo Cabina de Doblaje
 st.markdown("""
     <style>
     .subtitle-box {
@@ -109,34 +110,32 @@ def extraer_fragmento_audio_ref(inicio, fin, output_audio_path):
     subprocess.run(cmd, shell=True)
 
 def mostrar_grafico_ondas_nativo(audio_ref_path, audio_user_path=None, samples=300):
-    """Genera una vista de ondas usando el gráfico nativo de Streamlit (sin dependencias de matplotlib)"""
+    """Muestra gráfica de ondas compatible con Streamlit Cloud usando st.line_chart"""
     try:
         y_ref, _ = librosa.load(audio_ref_path, sr=8000)
-        
-        # Reducir resolución para renderizado rápido
         step_ref = max(1, len(y_ref) // samples)
         onda_ref = np.abs(y_ref[::step_ref][:samples])
 
-        data_dict = {"Original (Azul)": onda_ref}
+        data_dict = {"Original": onda_ref}
 
         if audio_user_path and os.path.exists(audio_user_path):
             y_user, _ = librosa.load(audio_user_path, sr=8000)
             step_user = max(1, len(y_user) // samples)
             onda_user = np.abs(y_user[::step_user][:samples])
             
-            # Ajustar longitudes para que coincidan
             if len(onda_user) < len(onda_ref):
                 onda_user = np.pad(onda_user, (0, len(onda_ref) - len(onda_user)))
             else:
                 onda_user = onda_user[:len(onda_ref)]
                 
-            data_dict["Tu Grabación (Rojo)"] = onda_user
+            data_dict["Tu Grabación"] = onda_user
 
         st.line_chart(data_dict, height=180)
     except Exception as e:
-        st.caption(f"No se pudo generar la vista previa de onda: {e}")
+        st.caption("No se pudo cargar la vista previa de ondas.")
 
 def evaluar_toma_divertida(audio_ref_path, audio_usuario_path):
+    """Calificación indulgente optimizada para micrófonos de teléfono"""
     try:
         y_ref, sr_ref = librosa.load(audio_ref_path)
         y_user, sr_user = librosa.load(audio_usuario_path)
@@ -253,6 +252,7 @@ if st.session_state.get('segments'):
     curr_idx = st.session_state['current_idx']
     seg_actual = segments[curr_idx]
 
+    # Navegación entre frases
     c_prev, c_info, c_next = st.columns([1, 3, 1])
     with c_prev:
         if st.button("⬅️ Frase Anterior") and curr_idx > 0:
@@ -275,8 +275,10 @@ if st.session_state.get('segments'):
 
     col_v1, col_v2, col_v3 = st.columns([1, 2, 1])
     with col_v2:
+        # 1. VIDEO ARRIBA
         st.video(clip_path)
         
+        # Teleprompter / Subtítulo
         st.markdown(f"""
             <div class="subtitle-box">
                 <p class="subtitle-text">"{seg_actual['text']}"</p>
@@ -286,10 +288,11 @@ if st.session_state.get('segments'):
 
         toma_user_path = f"user_toma_{curr_idx}.wav"
         
-        # Muestra la gráfica de ondas nativa
+        # 2. COMPARATIVA DE ONDAS ABAJO DEL VIDEO
+        st.write("📊 **Comparativa de Ondas:**")
         mostrar_grafico_ondas_nativo(audio_ref_seg_path, toma_user_path if os.path.exists(toma_user_path) else None)
-        st.caption("📈 Comparativa de ondas de audio (Original vs Tu Grabación)")
 
+        # 3. MÓDULO DE GRABACIÓN
         audio_data = st.audio_input(f"Grabar frase {curr_idx + 1}", key=f"rec_single_{curr_idx}")
         if audio_data:
             with open(toma_user_path, "wb") as f:
