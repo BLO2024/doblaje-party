@@ -1,6 +1,5 @@
 import streamlit as st
 import whisper
-import librosa
 import numpy as np
 import subprocess
 import os
